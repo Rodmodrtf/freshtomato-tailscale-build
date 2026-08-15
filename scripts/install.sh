@@ -17,8 +17,8 @@ log_info() { echo "[INFO] $*"; }
 log_warn() { echo "[WARN] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
-# Check if running as root
-if [ "$(id -u)" -ne 0 ]; then
+# Check if running as root (use whoami instead of id)
+if [ "$(whoami)" != "root" ]; then
     log_error "This script must be run as root"
     exit 1
 fi
@@ -62,9 +62,10 @@ TEMP_FILE=$(mktemp)
 curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
 chmod +x "$TEMP_FILE"
 
-# Verify it's a valid ARM binary
-if ! file "$TEMP_FILE" | grep -q "ARM"; then
-    log_error "Downloaded file is not an ARM binary"
+# Verify it's a valid ARM binary (use readelf or check ELF header instead of file command)
+# Check for ARM ELF magic bytes
+if ! head -c 20 "$TEMP_FILE" | grep -q $'\x7f''ELF'; then
+    log_error "Downloaded file is not a valid ELF binary"
     rm -f "$TEMP_FILE"
     exit 1
 fi

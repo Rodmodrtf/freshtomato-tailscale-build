@@ -99,49 +99,91 @@ iptables -C FORWARD -o tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -
 # Ensure tun module is loaded
 modprobe tun 2>/dev/null || log_warn "Could not load tun module (may already be loaded)"
 
-# Start tailscaled
-log_info "Starting tailscaled..."
-$INSTALL_DIR/tailscaled --state="$STATE_DIR/tailscaled.state" --socket="$SOCKET_PATH" &
-sleep 3
+# --- Interactive prompts ---
 
-# Bring up Tailscale
-log_info "Bringing up Tailscale interface..."
-$INSTALL_DIR/tailscale up --accept-routes --accept-dns=true --hostname="$HOSTNAME"
+# Ask about auto-start configuration
+echo ""
+log_info "Do you want to add auto-start to nvram (script_startup & script_usbmount)?"
+log_info "This will make Tailscale start automatically on boot and USB mount."
+printf "[INFO] Add auto-start to nvram? [y/N]: "
+read -r ADD_AUTOSTART
+case "$ADD_AUTOSTART" in
+    [Yy]|[Yy][Ee][Ss])
+        DO_AUTOSTART=1
+        ;;
+    *)
+        DO_AUTOSTART=0
+        log_info "Skipping nvram auto-start configuration."
+        ;;
+esac
 
-# Auto-configure startup scripts in nvram
-log_info "Configuring auto-start in nvram..."
-STARTUP_SCRIPT='
+# Ask about starting daemon now
+echo ""
+log_info "Do you want to start tailscaled now in the background?"
+printf "[INFO] Start tailscaled now? [y/N]: "
+read -r START_NOW
+case "$START_NOW" in
+    [Yy]|[Yy][Ee][Ss])
+        DO_START=1
+        ;;
+    *)
+        DO_START=0
+        log_info "Skipping daemon start. You can start later with:"
+        log_info "  /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &"
+        ;;
+esac
+
+# Configure auto-start in nvram if requested
+if [ "$DO_AUTOSTART" -eq 1 ]; then
+    log_info "Configuring auto-start in nvram..."
+    STARTUP_SCRIPT='
 # Tailscale auto-start
 modprobe tun
 /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &
-sleep 3
+sleep 5
 /opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1
-iptables -C INPUT -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i tailscale0 -j ACCEPT
-iptables -C FORWARD -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i tailscale0 -j ACCEPT
-iptables -C FORWARD -o tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -o tailscale0 -j ACCEPT
+iptables -I INPUT 1 -i tailscale0 -j ACCEPT 2>/dev/null
+iptables -I FORWARD -i tailscale0 -j ACCEPT 2>/dev/null
+iptables -I FORWARD -o tailscale0 -j ACCEPT 2>/dev/null
 '
 
-# Function to append to nvram script if not already present
-add_to_nvram_script() {
-    script_name="$1"
-    current=$(nvram get "$script_name" 2>/dev/null || echo "")
-    if echo "$current" | grep -q "Tailscale auto-start"; then
-        log_info "$script_name already contains Tailscale startup"
-    else
-        new_script=$(printf "%s\n%s" "$current" "$STARTUP_SCRIPT")
-        nvram set "$script_name"="$new_script"
-        log_info "Added Tailscale auto-start to $script_name"
-    fi
-}
+    add_to_nvram_script() {
+        script_name="$1"
+        current=$(nvram get "$script_name" 2>/dev/null || echo "")
+        if echo "$current" | grep -q "Tailscale auto-start"; then
+            log_info "$script_name already contains Tailscale startup"
+        else
+            new_script=$(printf "%s\n%s" "$current" "$STARTUP_SCRIPT")
+            nvram set "$script_name"="$new_script"
+            log_info "Added Tailscale auto-start to $script_name"
+        fi
+    }
 
-add_to_nvram_script "script_startup"
-add_to_nvram_script "script_usbmount"
+    add_to_nvram_script "script_startup"
+    add_to_nvram_script "script_usbmount"
 
-# Commit nvram changes
-nvram commit
-log_info "NVRAM committed. Auto-start configured for boot and USB mount."
+    # Commit nvram changes
+    nvram commit
+    log_info "NVRAM committed. Auto-start configured for boot and USB mount."
+fi
 
-log_info "Installation complete!"
+# Start daemon if requested
+if [ "$DO_START" -eq 1 ]; then
+    log_info "Starting tailscaled..."
+    $INSTALL_DIR/tailscaled --state="$STATE_DIR/tailscaled.state" --socket="$SOCKET_PATH" &
+    sleep 3
+
+    # Bring up Tailscale
+    log_info "Bringing up Tailscale interface..."
+    $INSTALL_DIR/tailscale up --accept-routes --accept-dns=true --hostname="$HOSTNAME"
+else
+    log_info ""
+    log_info "To start manually later:"
+    log_info "  /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &"
+    log_info "  /opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1"
+fi
+
 log_info ""
+log_info "Installation complete!"
 log_info "Run '/opt/bin/tailscale status' to verify connection"
 log_info "Run '/opt/bin/tailscale up' to re-authenticate if needed"

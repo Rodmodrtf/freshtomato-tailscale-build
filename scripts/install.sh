@@ -12,6 +12,7 @@ INSTALL_DIR="/opt/bin"
 STATE_DIR="/opt/var/lib/tailscale"
 SOCKET_PATH="/var/run/tailscaled.sock"
 HOSTNAME="fresh-1"
+ENTWARE_SRC="/tmp/mnt/usb/entware"
 
 log_info() { echo "[INFO] $*"; }
 log_warn() { echo "[WARN] $*"; }
@@ -31,9 +32,9 @@ if [ ! -f /etc/freshtomato_version ] && [ ! -f /etc/tomato_version ]; then
     log_warn "This doesn't appear to be a FreshTomato router. Continuing anyway..."
 fi
 
-# Check for Entware
-if [ ! -d /opt ] || [ ! -f /opt/bin/opkg ]; then
-    log_error "Entware not found at /opt. Please install Entware first."
+# Check for Entware (at source location, not /opt which might not be bound yet)
+if [ ! -d "$ENTWARE_SRC" ] || [ ! -f "$ENTWARE_SRC/bin/opkg" ]; then
+    log_error "Entware not found at $ENTWARE_SRC. Please install Entware first."
     log_info "See: https://github.com/Entware/Entware/wiki/Install-on-FreshTomato"
     exit 1
 fi
@@ -105,6 +106,7 @@ modprobe tun 2>/dev/null || log_warn "Could not load tun module (may already be 
 echo ""
 log_info "Do you want to add auto-start to nvram (script_startup & script_usbmount)?"
 log_info "This will make Tailscale start automatically on boot and USB mount."
+log_info "It will also add the Entware bind mount ($ENTWARE_SRC -> /opt)."
 printf "[INFO] Add auto-start to nvram? [y/N]: "
 read -r ADD_AUTOSTART
 case "$ADD_AUTOSTART" in
@@ -136,7 +138,31 @@ esac
 # Configure auto-start in nvram if requested
 if [ "$DO_AUTOSTART" -eq 1 ]; then
     log_info "Configuring auto-start in nvram..."
+    
+    # Script for script_startup (runs on boot)
     STARTUP_SCRIPT='
+# Entware bind mount
+if [ -d /tmp/mnt/usb/entware ]; then
+    mount --bind /tmp/mnt/usb/entware /opt
+fi
+
+# Tailscale auto-start
+modprobe tun
+/opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &
+sleep 5
+/opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1
+iptables -I INPUT 1 -i tailscale0 -j ACCEPT 2>/dev/null
+iptables -I FORWARD -i tailscale0 -j ACCEPT 2>/dev/null
+iptables -I FORWARD -o tailscale0 -j ACCEPT 2>/dev/null
+'
+
+    # Script for script_usbmount (runs when USB is mounted)
+    USBMOUNT_SCRIPT='
+# Entware bind mount
+if [ -d /tmp/mnt/usb/entware ]; then
+    mount --bind /tmp/mnt/usb/entware /opt
+fi
+
 # Tailscale auto-start
 modprobe tun
 /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &
@@ -149,26 +175,33 @@ iptables -I FORWARD -o tailscale0 -j ACCEPT 2>/dev/null
 
     add_to_nvram_script() {
         script_name="$1"
+        script_content="$2"
         current=$(nvram get "$script_name" 2>/dev/null || echo "")
         if echo "$current" | grep -q "Tailscale auto-start"; then
             log_info "$script_name already contains Tailscale startup"
         else
-            new_script=$(printf "%s\n%s" "$current" "$STARTUP_SCRIPT")
+            new_script=$(printf "%s\n%s" "$current" "$script_content")
             nvram set "$script_name"="$new_script"
-            log_info "Added Tailscale auto-start to $script_name"
+            log_info "Added auto-start to $script_name"
         fi
     }
 
-    add_to_nvram_script "script_startup"
-    add_to_nvram_script "script_usbmount"
+    add_to_nvram_script "script_startup" "$STARTUP_SCRIPT"
+    add_to_nvram_script "script_usbmount" "$USBMOUNT_SCRIPT"
 
     # Commit nvram changes
     nvram commit
-    log_info "NVRAM committed. Auto-start configured for boot and USB mount."
+    log_info "NVRAM committed. Auto-start configured for boot and USB mount (includes Entware bind mount)."
 fi
 
 # Start daemon if requested
 if [ "$DO_START" -eq 1 ]; then
+    # Ensure Entware is bound now
+    if [ -d "$ENTWARE_SRC" ] && ! mount | grep -q "on /opt "; then
+        log_info "Binding Entware to /opt..."
+        mount --bind "$ENTWARE_SRC" /opt
+    fi
+    
     log_info "Starting tailscaled..."
     $INSTALL_DIR/tailscaled --state="$STATE_DIR/tailscaled.state" --socket="$SOCKET_PATH" &
     sleep 3
@@ -178,7 +211,8 @@ if [ "$DO_START" -eq 1 ]; then
     $INSTALL_DIR/tailscale up --accept-routes --accept-dns=true --hostname="$HOSTNAME"
 else
     log_info ""
-    log_info "To start manually later:"
+    log_info "To start manually later (ensure Entware is bound first):"
+    log_info "  mount --bind /tmp/mnt/usb/entware /opt"
     log_info "  /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &"
     log_info "  /opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1"
 fi

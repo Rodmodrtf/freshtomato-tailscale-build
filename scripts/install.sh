@@ -1,10 +1,10 @@
-#!/bin/bash
+#!/bin/sh
 # FreshTomato Tailscale Easy Install/Update Script
 # Run this on your FreshTomato router to install or update Tailscale
-# Usage: curl -fsSL https://raw.githubusercontent.com/Rodmodrtf/freshtomato-tailscale-build/main/scripts/install.sh | bash
-# Or download and run: wget -O install.sh https://... && bash install.sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/Rodmodrtf/freshtomato-tailscale-build/main/scripts/install.sh | sh
+# Or download and run: wget -O install.sh https://... && sh install.sh
 
-set -euo pipefail
+set -eu
 
 REPO="Rodmodrtf/freshtomato-tailscale-build"
 BINARY_NAME="tailscale_combo"
@@ -13,15 +13,9 @@ STATE_DIR="/opt/var/lib/tailscale"
 SOCKET_PATH="/var/run/tailscaled.sock"
 HOSTNAME="fresh-1"
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-log_info() { echo -e "${GREEN}[INFO]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*"; }
+log_info() { echo "[INFO] $*"; }
+log_warn() { echo "[WARN] $*"; }
+log_error() { echo "[ERROR] $*"; }
 
 # Check if running as root
 if [ "$(id -u)" -ne 0 ]; then

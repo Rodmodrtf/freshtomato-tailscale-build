@@ -96,7 +96,7 @@ jobs:
       - name: Install UPX
         run: sudo apt-get update && sudo apt-get install -y upx
 
-      - name: Build armv5 combined binary (ts_include_cli)
+      - name: Build armv5 combined binary (ts_include_cli, ts_extra_small)
         env:
           GOARM: 5
           GOARCH: arm
@@ -104,7 +104,9 @@ jobs:
           GO111MODULE: on
         run: |
           cd tailscale-src
-          go build -tags ts_include_cli -ldflags "-s -w" -o tailscale_combo ./cmd/tailscale
+          # Build from cmd/tailscaled with ts_include_cli to get combined binary
+          # that detects argv[0] (tailscale vs tailscaled)
+          go build -tags "ts_include_cli,ts_extra_small" -ldflags "-s -w" -o tailscale_combo ./cmd/tailscaled
 
       - name: Pack with UPX
         run: |
@@ -115,6 +117,11 @@ jobs:
         run: |
           file tailscale-src/tailscale_combo
           ls -lh tailscale-src/tailscale_combo
+          # Test argv[0] detection
+          cp tailscale-src/tailscale_combo tailscale-src/tailscale
+          cp tailscale-src/tailscale_combo tailscale-src/tailscaled
+          ./tailscale-src/tailscale version
+          ./tailscale-src/tailscaled --version
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
@@ -129,34 +136,33 @@ jobs:
             
             **Architecture:** ARMv5 (soft-float, GOARM=5)
             
-            **Size:** ~5.2 MB (UPX packed)
+            **Size:** ~8 MB (UPX packed, with ts_extra_small)
             
-            **Installation:**
+            **Installation on Router:**
             ```bash
-            # On your FreshTomato router
-            cd /opt/bin
-            wget https://github.com/${{ github.repository }}/releases/download/v1.102.2-freshtomato-${{ github.run_number }}/tailscale_combo
-            chmod +x tailscale_combo
-            ln -sf tailscale_combo tailscaled
-            ```
+            # Copy to router and run:
+            mv tailscale_combo /opt/bin/tailscale_combo
+            chmod +x /opt/bin/tailscale_combo
+            ln -sf /opt/bin/tailscale_combo /opt/bin/tailscaled
             
-            **Firewall Rules Required (Kernel 2.6.36):**
-            ```bash
+            # Start
+            modprobe tun
             iptables -I INPUT 1 -i tailscale0 -j ACCEPT
             iptables -I FORWARD -i tailscale0 -j ACCEPT
             iptables -I FORWARD -o tailscale0 -j ACCEPT
+            /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &
+            /opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1
             ```
-            Add these to both `script_startup` and `script_usbmount` in FreshTomato GUI.
             
-            **Auto-start Example** (add to both startup scripts):
+            **Auto-start** (add to both `script_startup` and `script_usbmount` in FreshTomato GUI):
             ```bash
             modprobe tun
             /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &
-            sleep 2
+            sleep 5
             /opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1
-            iptables -C INPUT -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i tailscale0 -j ACCEPT
-            iptables -C FORWARD -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i tailscale0 -j ACCEPT
-            iptables -C FORWARD -o tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -o tailscale0 -j ACCEPT
+            iptables -I INPUT 1 -i tailscale0 -j ACCEPT 2>/dev/null
+            iptables -I FORWARD -i tailscale0 -j ACCEPT 2>/dev/null
+            iptables -I FORWARD -o tailscale0 -j ACCEPT 2>/dev/null
             ```
           files: tailscale-src/tailscale_combo
           draft: false

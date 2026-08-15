@@ -84,10 +84,11 @@ log_info "Installing to $INSTALL_DIR/$BINARY_NAME"
 mv "$TEMP_FILE" "$INSTALL_DIR/$BINARY_NAME"
 chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
-# Create symlink for tailscaled
+# Create symlinks for both tailscale and tailscaled (argv[0] detection)
+ln -sf "$INSTALL_DIR/$BINARY_NAME" "$INSTALL_DIR/tailscale"
 ln -sf "$INSTALL_DIR/$BINARY_NAME" "$INSTALL_DIR/tailscaled"
 
-log_info "Binary installed successfully"
+log_info "Binary installed with symlinks: tailscale and tailscaled"
 
 # Setup firewall rules (idempotent)
 log_info "Setting up firewall rules..."

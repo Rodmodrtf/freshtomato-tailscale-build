@@ -17,10 +17,14 @@ log_info() { echo "[INFO] $*"; }
 log_warn() { echo "[WARN] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
-# Check if running as root (use whoami instead of id)
-if [ "$(whoami)" != "root" ]; then
-    log_error "This script must be run as root"
-    exit 1
+# Check if running as root (use UID env var, fallback to test write)
+if [ "${UID:-$(id -u 2>/dev/null || echo 1)}" -ne 0 ] 2>/dev/null; then
+    # Try writing to a root-only location as fallback
+    if ! touch /root/.test_write 2>/dev/null; then
+        log_error "This script must be run as root"
+        exit 1
+    fi
+    rm -f /root/.test_write
 fi
 
 # Check if we're on FreshTomato
@@ -62,8 +66,7 @@ TEMP_FILE=$(mktemp)
 curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
 chmod +x "$TEMP_FILE"
 
-# Verify it's a valid ARM binary (use readelf or check ELF header instead of file command)
-# Check for ARM ELF magic bytes
+# Verify it's a valid ARM binary (check ELF magic bytes)
 if ! head -c 20 "$TEMP_FILE" | grep -q $'\x7f''ELF'; then
     log_error "Downloaded file is not a valid ELF binary"
     rm -f "$TEMP_FILE"

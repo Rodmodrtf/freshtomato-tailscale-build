@@ -17,9 +17,8 @@ log_info() { echo "[INFO] $*"; }
 log_warn() { echo "[WARN] $*"; }
 log_error() { echo "[ERROR] $*"; }
 
-# Check if running as root (use UID env var, fallback to test write)
+# Check if running as root
 if [ "${UID:-$(id -u 2>/dev/null || echo 1)}" -ne 0 ] 2>/dev/null; then
-    # Try writing to a root-only location as fallback
     if ! touch /root/.test_write 2>/dev/null; then
         log_error "This script must be run as root"
         exit 1
@@ -66,7 +65,7 @@ TEMP_FILE=$(mktemp)
 curl -fsSL "$DOWNLOAD_URL" -o "$TEMP_FILE"
 chmod +x "$TEMP_FILE"
 
-# Verify it's a valid ARM binary (check ELF magic bytes)
+# Verify it's a valid ELF binary
 if ! head -c 20 "$TEMP_FILE" | grep -q $'\x7f''ELF'; then
     log_error "Downloaded file is not a valid ELF binary"
     rm -f "$TEMP_FILE"
@@ -108,13 +107,9 @@ sleep 3
 log_info "Bringing up Tailscale interface..."
 $INSTALL_DIR/tailscale up --accept-routes --accept-dns=true --hostname="$HOSTNAME"
 
-log_info "Installation complete!"
-log_info ""
-log_info "Next steps:"
-log_info "1. Run '$INSTALL_DIR/tailscale up' to authenticate (if not already done)"
-log_info "2. Add the following to BOTH 'script_startup' and 'script_usbmount' in FreshTomato GUI:"
-log_info ""
-cat << 'EOF'
+# Auto-configure startup scripts in nvram
+log_info "Configuring auto-start in nvram..."
+STARTUP_SCRIPT='
 # Tailscale auto-start
 modprobe tun
 /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscaled.sock &
@@ -123,6 +118,29 @@ sleep 3
 iptables -C INPUT -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I INPUT 1 -i tailscale0 -j ACCEPT
 iptables -C FORWARD -i tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -i tailscale0 -j ACCEPT
 iptables -C FORWARD -o tailscale0 -j ACCEPT 2>/dev/null || iptables -I FORWARD -o tailscale0 -j ACCEPT
-EOF
+'
+
+# Function to append to nvram script if not already present
+add_to_nvram_script() {
+    script_name="$1"
+    current=$(nvram get "$script_name" 2>/dev/null || echo "")
+    if echo "$current" | grep -q "Tailscale auto-start"; then
+        log_info "$script_name already contains Tailscale startup"
+    else
+        new_script=$(printf "%s\n%s" "$current" "$STARTUP_SCRIPT")
+        nvram set "$script_name"="$new_script"
+        log_info "Added Tailscale auto-start to $script_name"
+    fi
+}
+
+add_to_nvram_script "script_startup"
+add_to_nvram_script "script_usbmount"
+
+# Commit nvram changes
+nvram commit
+log_info "NVRAM committed. Auto-start configured for boot and USB mount."
+
+log_info "Installation complete!"
 log_info ""
-log_info "3. Run '/opt/bin/tailscale status' to verify connection"
+log_info "Run '/opt/bin/tailscale status' to verify connection"
+log_info "Run '/opt/bin/tailscale up' to re-authenticate if needed"

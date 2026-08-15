@@ -11,6 +11,7 @@ STATE_DIR="/opt/var/lib/tailscale"
 SOCKET_DIR="/var/run/tailscale"
 SOCKET_PATH="$SOCKET_DIR/tailscaled.sock"
 HOSTNAME="fresh-1"
+ENTWARE_SRC="/tmp/mnt/usb/entware"
 
 log_info() { echo "[INFO] $*"; }
 log_warn() { echo "[WARN] $*"; }
@@ -66,11 +67,24 @@ iptables -I FORWARD -i tailscale0 -j ACCEPT 2>/dev/null || true
 iptables -I FORWARD -o tailscale0 -j ACCEPT 2>/dev/null || true
 modprobe tun 2>/dev/null || true
 
+# Helper: bind Entware if not already mounted
+bind_entware() {
+    if [ -d "$ENTWARE_SRC" ] && ! mount | grep -q "on /opt "; then
+        mount --bind "$ENTWARE_SRC" /opt
+        log_info "Bound Entware to /opt"
+    fi
+}
+
 # Interactive configuration
 printf "[INFO] Add auto-start to nvram? [y/N]: "
 read -r ADD_AUTOSTART
 if [ "$ADD_AUTOSTART" = "y" ] || [ "$ADD_AUTOSTART" = "Y" ]; then
     STARTUP_SCRIPT='
+# Entware bind mount
+if [ -d /tmp/mnt/usb/entware ]; then
+    mount --bind /tmp/mnt/usb/entware /opt
+fi
+
 # Tailscale auto-start
 modprobe tun
 /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock &
@@ -90,12 +104,13 @@ iptables -I FORWARD -o tailscale0 -j ACCEPT 2>/dev/null
     add_to_nvram_script "script_startup"
     add_to_nvram_script "script_usbmount"
     nvram commit
-    log_info "NVRAM updated."
+    log_info "NVRAM updated with Entware bind mount + Tailscale auto-start."
 fi
 
 printf "[INFO] Start tailscaled now? [y/N]: "
 read -r START_NOW
 if [ "$START_NOW" = "y" ] || [ "$START_NOW" = "Y" ]; then
+    bind_entware
     /opt/bin/tailscaled --state=/opt/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock &
     sleep 3
     /opt/bin/tailscale up --accept-routes --accept-dns=true --hostname=fresh-1 --advertise-routes=192.168.1.0/24
